@@ -3,31 +3,54 @@ import { useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { initSocket, disconnectSocket, getSocket } from '../utils/socket';
 
+// Editor states
+const EDITOR_STATE = {
+  LOADING: 'loading',
+  CONNECTED: 'connected',
+  RECONNECTING: 'reconnecting',
+  ERROR: 'error',
+};
+
 const EditorPage = () => {
   const { id: sessionId } = useParams();
   const [code, setCode] = useState('');
   const [userCount, setUserCount] = useState(0);
-  const [error, setError] = useState(null);
-  const [isEditorDisabled, setIsEditorDisabled] = useState(false);
+  const [editorState, setEditorState] = useState(EDITOR_STATE.LOADING);
+  const [errorMessage, setErrorMessage] = useState(null);
   
   // Flag to prevent emitting when content comes from server
   const isUpdatingFromServer = useRef(false);
   
+  // Debounce timer for code-change emits
+  const debounceTimerRef = useRef(null);
+  
   // Socket.IO server URL - adjust this to match your backend
   const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+  
+  // Debounce delay: 300ms
+  const DEBOUNCE_DELAY = 300;
 
   useEffect(() => {
     if (!sessionId) {
-      setError('Session ID is missing');
-      setIsEditorDisabled(true);
+      setErrorMessage('Session ID is missing');
+      setEditorState(EDITOR_STATE.ERROR);
       return;
     }
+
+    // Set initial state to loading
+    setEditorState(EDITOR_STATE.LOADING);
+    setErrorMessage(null);
 
     // Initialize socket connection
     const socket = initSocket(SOCKET_URL);
 
-    // Join session
-    socket.emit('join-session', sessionId);
+    // Helper function to emit join-session
+    const joinSession = () => {
+      socket.emit('join-session', sessionId);
+    };
+
+    // Join session on mount
+    joinSession();
 
     // Handle session joined
     socket.on('session-joined', (data) => {
@@ -39,8 +62,8 @@ const EditorPage = () => {
       if (data.userCount !== undefined) {
         setUserCount(data.userCount);
       }
-      setError(null);
-      setIsEditorDisabled(false);
+      setEditorState(EDITOR_STATE.CONNECTED);
+      setErrorMessage(null);
     });
 
     // Handle code updates from server
@@ -59,61 +82,165 @@ const EditorPage = () => {
       }
     });
 
-    // Handle session errors
+    // Handle session errors (unrecoverable)
     socket.on('session-error', (data) => {
-      setError(data.message || 'An error occurred');
-      setIsEditorDisabled(true);
+      setErrorMessage(data.message || 'An error occurred');
+      setEditorState(EDITOR_STATE.ERROR);
     });
 
-    // Handle connection errors
+    // Handle socket disconnect
+    socket.on('disconnect', () => {
+      // Set to reconnecting (socket.io will handle reconnection automatically)
+      setEditorState((prevState) => {
+        // Only set to reconnecting if not already in error state
+        if (prevState !== EDITOR_STATE.ERROR) {
+          return EDITOR_STATE.RECONNECTING;
+        }
+        return prevState;
+      });
+    });
+
+    // Handle socket reconnect
+    socket.on('connect', () => {
+      // Re-join session on reconnect
+      // Use functional update to check current state
+      setEditorState((prevState) => {
+        if (prevState === EDITOR_STATE.RECONNECTING) {
+          // Re-join session
+          socket.emit('join-session', sessionId);
+          // State will be set to CONNECTED when session-joined is received
+        }
+        return prevState;
+      });
+    });
+
+    // Handle connection errors (initial connection failures)
     socket.on('connect_error', (err) => {
-      setError(`Connection error: ${err.message}`);
-      setIsEditorDisabled(true);
+      // Only set error if we're in loading state (initial connection failure)
+      setEditorState((prevState) => {
+        if (prevState === EDITOR_STATE.LOADING) {
+          setErrorMessage(`Connection error: ${err.message}`);
+          return EDITOR_STATE.ERROR;
+        }
+        return prevState;
+      });
     });
 
     // Cleanup on unmount
     return () => {
+      // Clear debounce timer
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      
       socket.off('session-joined');
       socket.off('code-update');
       socket.off('user-count-update');
       socket.off('session-error');
+      socket.off('disconnect');
+      socket.off('connect');
       socket.off('connect_error');
       disconnectSocket();
     };
   }, [sessionId, SOCKET_URL]);
 
-  // Handle editor content change
+  // Handle editor content change with debounce
   const handleEditorChange = (value) => {
     const newCode = value || '';
     
-    // Only emit if change is from user, not from server
-    if (!isUpdatingFromServer.current) {
-      const socket = getSocket();
-      if (socket && socket.connected) {
-        socket.emit('code-change', {
-          sessionId,
-          content: newCode,
-        });
-      }
-    }
-    
-    // Always update local state
+    // Always update local state immediately (no debounce on UI)
     setCode(newCode);
+    
+    // Debounce socket emit (only if change is from user, not from server)
+    if (!isUpdatingFromServer.current) {
+      // Clear existing timer
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      
+      // Set new timer for debounced emit
+      // Capture newCode in closure for the timeout callback
+      debounceTimerRef.current = setTimeout(() => {
+        const socket = getSocket();
+        // Check socket connection and emit
+        if (socket && socket.connected) {
+          socket.emit('code-change', {
+            sessionId,
+            content: newCode, // Use newCode from closure
+          });
+        }
+        debounceTimerRef.current = null;
+      }, DEBOUNCE_DELAY);
+    }
+  };
+
+  // Determine if editor should be disabled
+  const isEditorDisabled = editorState !== EDITOR_STATE.CONNECTED;
+  
+  // Get status text based on state
+  const getStatusText = () => {
+    switch (editorState) {
+      case EDITOR_STATE.LOADING:
+        return 'Loading';
+      case EDITOR_STATE.CONNECTED:
+        return 'Connected';
+      case EDITOR_STATE.RECONNECTING:
+        return 'Reconnecting';
+      case EDITOR_STATE.ERROR:
+        return 'Error';
+      default:
+        return '';
+    }
+  };
+
+  // Get status badge class based on state
+  const getStatusBadgeClass = () => {
+    switch (editorState) {
+      case EDITOR_STATE.LOADING:
+        return 'editor-status-badge editor-status-loading';
+      case EDITOR_STATE.CONNECTED:
+        return 'editor-status-badge editor-status-connected';
+      case EDITOR_STATE.RECONNECTING:
+        return 'editor-status-badge editor-status-reconnecting';
+      case EDITOR_STATE.ERROR:
+        return 'editor-status-badge editor-status-error';
+      default:
+        return 'editor-status-badge editor-status-loading';
+    }
   };
 
   return (
-    <div style={{ padding: '20px', height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ marginBottom: '10px' }}>
-        <div>Session ID: {sessionId}</div>
-        <div>Users: {userCount}</div>
-        {error && (
-          <div style={{ color: 'red', marginTop: '10px' }}>
-            Error: {error}
+    <div className="editor-page">
+      {/* Header Section */}
+      <header className="editor-header">
+        <div className="editor-header-title">CodeShare</div>
+        
+        <div className="editor-header-info">
+          <div className="editor-header-item">
+            <span className="editor-header-label">Session:</span>
+            <span className="editor-header-value">{sessionId}</span>
           </div>
-        )}
-      </div>
-      
-      <div style={{ flex: 1, border: '1px solid #ccc' }}>
+          
+          <div className="editor-header-item">
+            <span className="editor-header-label">Users:</span>
+            <span className="editor-header-value">{userCount}</span>
+          </div>
+          
+          <div className="editor-header-item">
+            <span className={getStatusBadgeClass()}>
+              {getStatusText()}
+            </span>
+            {editorState === EDITOR_STATE.ERROR && errorMessage && (
+              <span style={{ marginLeft: '8px', fontSize: '12px', color: '#dc3545' }}>
+                {errorMessage}
+              </span>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Editor Area */}
+      <div className="editor-area">
         <Editor
           height="100%"
           defaultLanguage="javascript"
@@ -127,6 +254,13 @@ const EditorPage = () => {
           }}
         />
       </div>
+
+      {/* Footer Section */}
+      <footer className="editor-footer">
+        <span className="editor-footer-text">Share this link to collaborate</span>
+        <span className="editor-footer-text">•</span>
+        <span className="editor-footer-text">Changes are saved automatically</span>
+      </footer>
     </div>
   );
 };

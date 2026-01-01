@@ -17,3 +17,138 @@ body {
   width: 100vw;
 }
 
+/* Editor Page Styles */
+.editor-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: #f5f5f5;
+}
+
+.editor-header {
+  background-color: #ffffff;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 16px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.editor-header-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #333;
+  margin-right: auto;
+}
+
+.editor-header-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  font-size: 14px;
+  color: #666;
+}
+
+.editor-header-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-header-label {
+  font-weight: 500;
+  color: #888;
+}
+
+.editor-header-value {
+  color: #333;
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  user-select: all;
+  cursor: text;
+}
+
+.editor-status-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.editor-status-loading {
+  background-color: #e0e0e0;
+  color: #666;
+}
+
+.editor-status-connected {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.editor-status-reconnecting {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.editor-status-error {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.editor-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background-color: #ffffff;
+  margin: 16px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.editor-footer {
+  background-color: #ffffff;
+  border-top: 1px solid #e0e0e0;
+  padding: 12px 24px;
+  font-size: 12px;
+  color: #888;
+  text-align: center;
+}
+
+.editor-footer-text {
+  margin: 0 8px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .editor-header {
+    padding: 12px 16px;
+    gap: 12px;
+  }
+
+  .editor-header-title {
+    font-size: 18px;
+    width: 100%;
+    margin-bottom: 8px;
+  }
+
+  .editor-header-info {
+    width: 100%;
+    gap: 12px;
+  }
+
+  .editor-area {
+    margin: 8px;
+  }
+
+  .editor-footer {
+    padding: 10px 16px;
+    font-size: 11px;
+  }
+}
+
