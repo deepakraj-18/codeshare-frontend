@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { initSocket, disconnectSocket, getSocket } from '../utils/socket';
 
@@ -17,12 +17,21 @@ const EditorPage = () => {
   const [userCount, setUserCount] = useState(0);
   const [editorState, setEditorState] = useState(EDITOR_STATE.LOADING);
   const [errorMessage, setErrorMessage] = useState(null);
+  const [copyFeedback, setCopyFeedback] = useState(false);
+  const [cursorPosition, setCursorPosition] = useState({ line: 1, column: 1 });
+  const [language, setLanguage] = useState('javascript');
   
   // Flag to prevent emitting when content comes from server
   const isUpdatingFromServer = useRef(false);
   
   // Debounce timer for code-change emits
   const debounceTimerRef = useRef(null);
+  
+  // Copy feedback timer
+  const copyFeedbackTimerRef = useRef(null);
+  
+  // Editor instance ref
+  const editorRef = useRef(null);
   
   // Socket.IO server URL - adjust this to match your backend
   const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
@@ -174,6 +183,58 @@ const EditorPage = () => {
     }
   };
 
+  // Handle copy link
+  const handleCopyLink = async () => {
+    try {
+      const url = window.location.href;
+      await navigator.clipboard.writeText(url);
+      
+      // Show feedback
+      setCopyFeedback(true);
+      
+      // Clear existing timer if any
+      if (copyFeedbackTimerRef.current) {
+        clearTimeout(copyFeedbackTimerRef.current);
+      }
+      
+      // Hide feedback after 2 seconds
+      copyFeedbackTimerRef.current = setTimeout(() => {
+        setCopyFeedback(false);
+        copyFeedbackTimerRef.current = null;
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy link:', err);
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = window.location.href;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopyFeedback(true);
+        if (copyFeedbackTimerRef.current) {
+          clearTimeout(copyFeedbackTimerRef.current);
+        }
+        copyFeedbackTimerRef.current = setTimeout(() => {
+          setCopyFeedback(false);
+          copyFeedbackTimerRef.current = null;
+        }, 2000);
+      } catch (fallbackErr) {
+        console.error('Fallback copy failed:', fallbackErr);
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
+  // Cleanup copy feedback timer on unmount
+  useEffect(() => {
+    return () => {
+      if (copyFeedbackTimerRef.current) {
+        clearTimeout(copyFeedbackTimerRef.current);
+      }
+    };
+  }, []);
+
   // Determine if editor should be disabled
   const isEditorDisabled = editorState !== EDITOR_STATE.CONNECTED;
   
@@ -213,53 +274,140 @@ const EditorPage = () => {
     <div className="editor-page">
       {/* Header Section */}
       <header className="editor-header">
-        <div className="editor-header-title">CodeShare</div>
-        
-        <div className="editor-header-info">
-          <div className="editor-header-item">
+        <div className="editor-header-content">
+          <Link to="/" className="editor-header-logo">
+            <span className="editor-header-logo-icon">&lt;/&gt;</span>
+            <span>Codeshare</span>
+          </Link>
+          
+          <div className="editor-header-center">
             <span className="editor-header-label">Session:</span>
-            <span className="editor-header-value">{sessionId}</span>
+            <button className="editor-header-session-button">New</button>
+            <button
+              className="editor-header-copy-button"
+              onClick={handleCopyLink}
+              title="Copy session link"
+            >
+              {copyFeedback ? '✓' : '📋'}
+            </button>
           </div>
           
-          <div className="editor-header-item">
-            <span className="editor-header-label">Users:</span>
-            <span className="editor-header-value">{userCount}</span>
-          </div>
-          
-          <div className="editor-header-item">
-            <span className={getStatusBadgeClass()}>
-              {getStatusText()}
-            </span>
-            {editorState === EDITOR_STATE.ERROR && errorMessage && (
-              <span style={{ marginLeft: '8px', fontSize: '12px', color: '#dc3545' }}>
-                {errorMessage}
-              </span>
-            )}
+          <div className="editor-header-actions">
+            <button className="editor-header-share-button">Share</button>
+            <button className="editor-header-login-button">Login (Demo Pro)</button>
           </div>
         </div>
       </header>
 
       {/* Editor Area */}
-      <div className="editor-area">
-        <Editor
-          height="100%"
-          defaultLanguage="javascript"
-          value={code}
-          onChange={handleEditorChange}
-          options={{
-            readOnly: isEditorDisabled,
-            minimap: { enabled: false },
-            fontSize: 14,
-            wordWrap: 'on',
-          }}
-        />
+      <div className="editor-main-content">
+        <div className="editor-area">
+          <Editor
+            height="100%"
+            defaultLanguage={language}
+            theme="vs-dark"
+            value={code}
+            onChange={handleEditorChange}
+            onMount={(editor) => {
+              editorRef.current = editor;
+              // Update cursor position on change
+              editor.onDidChangeCursorPosition((e) => {
+                setCursorPosition({
+                  line: e.position.lineNumber,
+                  column: e.position.column,
+                });
+              });
+            }}
+            language={language}
+            options={{
+              readOnly: isEditorDisabled,
+              minimap: { enabled: false },
+              fontSize: 14,
+              wordWrap: 'on',
+            }}
+          />
+        </div>
+
+        {/* Collaboration Panel */}
+        <aside className="editor-sidebar">
+          <div className="editor-sidebar-header">
+            <h3 className="editor-sidebar-title">Online ({userCount})</h3>
+          </div>
+          
+          <div className="editor-sidebar-users">
+            <div className="editor-sidebar-user">
+              <div className="editor-sidebar-avatar">me</div>
+              <div className="editor-sidebar-user-info">
+                <div className="editor-sidebar-user-name">You</div>
+                <div className="editor-sidebar-user-status">Editing...</div>
+              </div>
+            </div>
+            
+            {userCount > 1 && (
+              <>
+                <div className="editor-sidebar-user">
+                  <div className="editor-sidebar-avatar">JD</div>
+                  <div className="editor-sidebar-user-info">
+                    <div className="editor-sidebar-user-name">John Doe</div>
+                    <div className="editor-sidebar-user-status">Idle</div>
+                  </div>
+                </div>
+                
+                {userCount > 2 && (
+                  <div className="editor-sidebar-user">
+                    <div className="editor-sidebar-avatar">Gues</div>
+                    <div className="editor-sidebar-user-info">
+                      <div className="editor-sidebar-user-name">Guest User</div>
+                      <div className="editor-sidebar-user-status">Viewing</div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="editor-sidebar-ad">
+            <div className="editor-sidebar-ad-placeholder">Ad Space</div>
+          </div>
+        </aside>
       </div>
 
       {/* Footer Section */}
       <footer className="editor-footer">
-        <span className="editor-footer-text">Share this link to collaborate</span>
-        <span className="editor-footer-text">•</span>
-        <span className="editor-footer-text">Changes are saved automatically</span>
+        <div className="editor-footer-left">
+          <div className="editor-footer-status">
+            <span className={`editor-footer-status-dot ${editorState === EDITOR_STATE.CONNECTED ? 'editor-footer-status-dot-connected' : ''}`}></span>
+            <span>{getStatusText()}</span>
+          </div>
+          <span className="editor-footer-separator">•</span>
+          <span>Line {cursorPosition.line}, Column {cursorPosition.column}</span>
+          <span className="editor-footer-separator">•</span>
+          <span>UTF-8</span>
+        </div>
+        
+        <div className="editor-footer-center">
+          <select 
+            className="editor-footer-language-select"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+          >
+            <option value="javascript">JavaScript</option>
+            <option value="typescript">TypeScript</option>
+            <option value="python">Python</option>
+            <option value="java">Java</option>
+            <option value="cpp">C++</option>
+            <option value="csharp">C#</option>
+            <option value="go">Go</option>
+            <option value="rust">Rust</option>
+          </select>
+        </div>
+        
+        <div className="editor-footer-right">
+          <button className="editor-footer-help-button" title="Help">?</button>
+          <span>{language.charAt(0).toUpperCase() + language.slice(1)}</span>
+          <span className="editor-footer-separator">•</span>
+          <span>2 Spaces</span>
+        </div>
       </footer>
     </div>
   );
